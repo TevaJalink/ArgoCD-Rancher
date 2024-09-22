@@ -182,6 +182,11 @@ resource "helm_release" "rancher" {
     name  = "auth.rbac.admin_group"
     value = var.devops_admin_group
   }
+}
 
-  depends_on = [module.eks-devops] # Ensure that the EKS cluster or your Kubernetes cluster is available before deploying Rancher
+data "kubernetes_service" "rancher_server" {
+  metadata {
+    name      = "rancher"
+    namespace = "cattle-system"
+  }
 }

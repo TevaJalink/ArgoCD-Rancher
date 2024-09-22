@@ -136,3 +136,51 @@ variable "replica_maintenance_windows" {
   description = "The maintenance window for the RDS replica"
   type        = string
 }
+
+variable "access_key_dcentralab-dub" {
+  description = "access_key used for rancher cloud cred to dcentralab-dub aws account"
+  type        = string
+  sensitive   = true
+}
+
+variable "secret_key_dcentralab-dub" {
+  description = "secret_key used for rancher cloud cred to dcentralab-dub aws account"
+  type        = string
+  sensitive   = true
+}
+
+variable "access_key_chainport" {
+  description = "access_key used for rancher cloud cred to chainport aws account"
+  type        = string
+  sensitive   = true
+}
+
+variable "secret_key_chainport" {
+  description = "secret_key used for rancher cloud cred to chainport aws account"
+  type        = string
+  sensitive   = true
+}
+
+variable "chainport_iam_role_arn" {
+  description = "iam role arn used to manage clusters in other AWS accounts"
+  type        = string
+}
+
+variable "importing_clusters_dcentralab-dub" {
+  description = "import cluster name for dcentralab-dub"
+  type = map(object({
+    cluster_name = string
+  }))
+}
+
+variable "importing_clusters_chainport" {
+  description = "import cluster name for chainport"
+  type = map(object({
+    cluster_name = string
+  }))
+}
+
+variable "argocd-ns" {
+  description = "The name of the namespace argo will be deployed in"
+  type        = string
+}

@@ -3,7 +3,7 @@ resource "helm_release" "argocd" {
 
   repository       = "https://argoproj.github.io/argo-helm"
   chart            = "argo-cd"
-  namespace        = "argocd"
+  namespace        = var.argocd-ns
   create_namespace = true
   version          = "7.5.2"
 
@@ -102,8 +102,6 @@ resource "helm_release" "argocd" {
       g, oidc:<READONLY_GROUP>, role:readonly
     EOT
   }
-
-  depends_on = [module.eks-devops]
 }
 
 data "kubernetes_service" "argocd_server" {
