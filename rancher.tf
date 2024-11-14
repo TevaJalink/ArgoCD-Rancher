@@ -1,56 +1,22 @@
 data "aws_caller_identity" "current" {}
 
-resource "aws_iam_role" "rds_access_role" {
-  name = "rancher-rds-access-role"
+resource "helm_release" "cert_manager" {
+  name       = "cert-manager"
+  namespace  = "cert-manager"
+  chart      = "cert-manager"
+  repository = "https://charts.jetstack.io"
+  version    = "v1.13.0"
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRoleWithWebIdentity"
-        Effect = "Allow"
-        Principal = {
-          Federated = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/${module.eks-devops.cluster_oidc_issuer_url}"
-        }
-        Condition = {
-          "StringEquals" = {
-            "${module.eks-devops.cluster_oidc_issuer_url}:sub" = "system:serviceaccount:cattle-system:rancher-service-account"
-          }
-        }
-      }
-    ]
-  })
-}
+  create_namespace = true
 
-resource "aws_iam_role_policy" "rds_access_policy" {
-  role = aws_iam_role.rds_access_role.id
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-          "rds-db:connect"
-        ]
-        Effect   = "Allow"
-        Resource = "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${aws_db_instance.RDS-Instance.identifier}/rancherdbuser"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "rds_policy_attachment" {
-  role       = aws_iam_role.rds_access_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonRDSFullAccess"
-}
-
-resource "kubernetes_service_account" "rancher_sa" {
-  metadata {
-    name      = "rancher-service-account"
-    namespace = "cattle-system"
-    annotations = {
-      "eks.amazonaws.com/role-arn" = aws_iam_role.rds_access_role.arn
-    }
+  set {
+    name  = "global.leaderElection.namespace"
+    value = "cert-manager"
   }
 }
 
@@ -62,6 +28,21 @@ resource "random_password" "rancher_user" {
   lower   = true
 }
 
+resource "helm_release" "ingress-nginx" {
+  name             = "ingress-nginx"
+  namespace        = "ingress-nginx"
+  repository       = "https://kubernetes.github.io/ingress-nginx"
+  chart            = "ingress-nginx"
+  version          = "4.11.3"
+  create_namespace = true
+  timeout          = 900
+
+  set {
+    name  = "controller.service.type"
+    value = "LoadBalancer"
+  }
+}
+
 resource "helm_release" "rancher" {
   name             = "rancher"
   namespace        = "cattle-system"
@@ -69,6 +50,8 @@ resource "helm_release" "rancher" {
   chart            = "rancher"
   version          = "2.9.1"
   create_namespace = true
+  timeout          = 900
+  values           = [file("${path.module}/rancher-values.yaml")]
 
   set {
     name  = "hostname"
@@ -87,106 +70,82 @@ resource "helm_release" "rancher" {
   }
 
   set {
-    name  = "server.service.type"
-    value = "LoadBalancer"
+    name  = "service.type"
+    value = "ClusterIP"
   }
 
   set {
-    name  = "server.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
-    value = "nlb"
+    name  = "ingress.tls.source"
+    value = "letsEncrypt"
   }
 
   set {
-    name  = "server.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-ssl-cert"
-    value = var.ssl_certificate_arn
+    name  = "ingress.ingressClassName"
+    value = "nginx"
   }
 
   set {
-    name  = "server.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-backend-protocol"
-    value = "HTTP"
+    name  = "letsEncrypt.email"
+    value = "teva.jalink@dcentralab.com"
   }
 
   set {
-    name  = "server.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-ssl-ports"
-    value = "443"
+    name  = "letsEncrypt.ingress.class"
+    value = "nginx"
   }
 
-  # rke remote backend with aws rds
-  set {
-    name  = "externalDatabase.type"
-    value = "postgresql"
-  }
-
-  set {
-    name  = "externalDatabase.postgresql.host"
-    value = aws_db_instance.RDS-Instance.endpoint
-  }
-
-  set {
-    name  = "externalDatabase.postgresql.database"
-    value = var.db_name
-  }
-
-  set {
-    name  = "externalDatabase.postgresql.port"
-    value = "5432"
-  }
-
-  set {
-    name  = "externalDatabase.postgresql.username"
-    value = "rancherdbuser"
-  }
-
-  set {
-    name  = "externalDatabase.postgresql.iam"
-    value = "true"
-  }
-
-  set {
-    name  = "serviceAccountName"
-    value = "rancher-service-account"
-  }
-
-  #oidc intergration with okta
-  set {
-    name  = "auth.provider"
-    value = "oidc"
-  }
-
-  set {
-    name  = "auth.oidc.clientId"
-    value = var.okta_client_id_rancher
-  }
-
-  set {
-    name  = "auth.oidc.clientSecret"
-    value = var.okta_client_secret_rancher
-  }
-
-  set {
-    name  = "auth.oidc.issuer"
-    value = var.okta_issuer_url
-  }
-
-  set {
-    name  = "auth.oidc.redirectUri"
-    value = "https://${var.rancher_hostname}/v1-auth/callback"
-  }
-
-  set {
-    name  = "auth.oidc.scopes"
-    value = "openid,email,profile,groups"
-  }
-
-  set {
-    name  = "auth.rbac.admin_group"
-    value = var.devops_admin_group
-  }
+  depends_on = [
+    helm_release.cert_manager
+  ]
 }
 
-data "kubernetes_service" "rancher_server" {
+data "kubernetes_service" "nginx_controller" {
   metadata {
-    name      = "rancher"
-    namespace = "cattle-system"
+    name      = "ingress-nginx-controller"
+    namespace = "ingress-nginx"
   }
+  depends_on = [
+    helm_release.rancher
+  ]
+}
+
+resource "aws_route53_record" "rancher" {
+  zone_id = aws_route53_zone.devops_subdomain.zone_id
+  name    = "rancher.devops.dcentralab.com"
+  type    = "CNAME"
+
+  records = [data.kubernetes_service.nginx_controller.status[0].load_balancer[0].ingress[0].hostname]
+  ttl     = 300
+}
+
+resource "null_resource" "patch_genericoidc" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "${base64decode(module.eks-devops.cluster_certificate_authority_data)}" > /tmp/ca.crt
+      kubectl patch authconfig genericoidc --type=merge -p '{
+        "status": {
+          "conditions": [
+            {
+              "status": "True",
+              "type": "SecretsMigrated"
+            }
+          ]
+        },
+        "accessMode": "unrestricted",
+        "allowedPrincipalIds": [
+          "genericoidc_user://00uhj51hpt6sUxLng697"
+        ],
+        "clientId": "0oaj1uxk5iyEoIUaY697",
+        "clientSecret": "b9tcG0lq4S-ibkKegjsToMr4Y6xtcMT5o-j62UQYrBcv5JDlNx_OtFtX6jbPkluE",
+        "enabled": true,
+        "groupSearchEnabled": true,
+        "issuer": "https://dcentralab.okta.com",
+        "rancherUrl": "https://rancher.devops.dcentralab.com/verify-auth",
+        "scope": "openid profile email groups"
+      }' --token=${data.aws_eks_cluster_auth.eks-devops.token} --server=${module.eks-devops.cluster_endpoint} --certificate-authority="/tmp/ca.crt"
+    EOT
+  }
+  depends_on = [
+    helm_release.rancher
+  ]
 }

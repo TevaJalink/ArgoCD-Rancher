@@ -1,3 +1,33 @@
+resource "aws_acm_certificate" "argocd_cert" {
+  domain_name               = "argocd.devops.dcentralab.com"
+  validation_method         = "DNS"
+  subject_alternative_names = ["argocd.devops.dcentralab.com"]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name = "argocd-subdomain-cert"
+  }
+}
+
+resource "aws_route53_record" "argocd_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.argocd_cert.domain_validation_options : dvo.domain_name => {
+      name  = dvo.resource_record_name
+      type  = dvo.resource_record_type
+      value = dvo.resource_record_value
+    }
+  }
+
+  zone_id = aws_route53_zone.devops_subdomain.zone_id
+  name    = each.value.name
+  type    = each.value.type
+  records = [each.value.value]
+  ttl     = 300
+}
+
 resource "helm_release" "argocd" {
   name = "argocd"
 
@@ -6,6 +36,8 @@ resource "helm_release" "argocd" {
   namespace        = var.argocd-ns
   create_namespace = true
   version          = "7.5.2"
+  timeout          = 900
+  values           = [file("${path.module}/argocd-values.yaml")]
 
   # load balancer for argocd-server - look into using VPN and migrating to NodePort
   set {
@@ -20,7 +52,7 @@ resource "helm_release" "argocd" {
 
   set {
     name  = "server.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-ssl-cert"
-    value = var.ssl_certificate_arn
+    value = tostring(aws_acm_certificate.argocd_cert.arn)
   }
 
   set {
@@ -64,49 +96,63 @@ resource "helm_release" "argocd" {
     value = "true"
   }
 
-  # sync policy
+  # sync policy ##################################
   set {
     name  = "configs.cm.syncOptions"
-    value = "[\"Prune=true\", \"SelfHeal=true\"]"
+    value = "Prune=true,SelfHeal=true"
   }
 
-  # OIDC integration for Okta
+  # OIDC integration for Okta - ["openid", "profile", "email", "groups"]
   set {
-    name  = "configs.cm.oidc.config"
-    value = <<-EOT
-    name: Okta
-    issuer: ${var.okta_issuer_url}
-    clientID: ${var.okta_client_id_argocd}
-    clientSecret: ${var.okta_client_secret_argocd} # this needs to be passed as a pipeline variable at the terraform plan/apply level
-    requestedScopes: ["openid", "profile", "email", "groups"]
-    requestedIDTokenClaims: |
-      emails:
-        essential: true
-      groups:
-        essential: true
-        value: ${var.devops_admin_group}
-    EOT
+    name = "oidc.config"
+    value = yamlencode({
+      name            = "Okta"
+      issuer          = var.okta_issuer_url
+      clientID        = var.okta_client_id_argocd
+      clientSecret    = var.okta_client_secret_argocd
+      redirectURI     = "https://argocd.devops.dcentralab.com/auth/callback"
+      requestedScopes = ["openid", "profile", "email", "groups"]
+      requestedIDTokenClaims = {
+        emails = { essential = true }
+        groups = {
+          essential = true
+          value     = var.devops_admin_group
+        }
+      }
+    })
   }
+
+
 
   # Disable the default admin user
+  #   set {
+  #     name  = "configs.cm.accounts.admin"
+  #     value = ""
+  #   }
+
   set {
-    name  = "configs.cm.accounts.admin"
-    value = ""
+    name  = "rbacConfigMap.enabled"
+    value = "true"
   }
 
-  # Set RBAC policies in argocd-rbac-cm
   set {
-    name  = "configs.rbac.policy.csv"
-    value = <<-EOT
-      g, oidc:<ADMIN_GROUP>, role:admin
-      g, oidc:<READONLY_GROUP>, role:readonly
-    EOT
+    name  = "configs.cm.url"
+    value = "https://argocd.devops.dcentralab.com"
   }
 }
 
-data "kubernetes_service" "argocd_server" {
+data "kubernetes_service" "argocd_service" {
   metadata {
     name      = "argocd-server"
     namespace = helm_release.argocd.namespace
   }
+}
+
+resource "aws_route53_record" "argocd" {
+  zone_id = aws_route53_zone.devops_subdomain.zone_id
+  name    = "argocd.devops.dcentralab.com"
+  type    = "CNAME"
+
+  records = [data.kubernetes_service.argocd_service.status[0].load_balancer[0].ingress[0].hostname]
+  ttl     = 300
 }

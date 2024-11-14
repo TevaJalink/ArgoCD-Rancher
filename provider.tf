@@ -1,4 +1,9 @@
 terraform {
+  backend "s3" {
+    bucket = "k8s-management-system"
+    key    = "terraform/terraform.tfstate"
+    region = "us-east-1"
+  }
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -33,22 +38,23 @@ provider "aws" {
 
 provider "kubernetes" {
   host                   = module.eks-devops.cluster_endpoint
-  cluster_ca_certificate = module.eks-devops.cluster_certificate_authority_data
+  cluster_ca_certificate = base64decode(module.eks-devops.cluster_certificate_authority_data)
   token                  = data.aws_eks_cluster_auth.eks-devops.token
 }
 
 provider "helm" {
   kubernetes {
     host                   = module.eks-devops.cluster_endpoint
-    cluster_ca_certificate = module.eks-devops.cluster_certificate_authority_data
+    cluster_ca_certificate = base64decode(module.eks-devops.cluster_certificate_authority_data)
     token                  = data.aws_eks_cluster_auth.eks-devops.token
   }
 }
 
 data "aws_eks_cluster_auth" "eks-devops" {
-  name = module.eks-devops.cluster_id
+  name = module.eks-devops.cluster_name
 }
 
 provider "rancher2" {
-  # Configuration options
+  api_url   = "https://${var.rancher_hostname}/v3"
+  token_key = random_password.rancher_user.result
 }
