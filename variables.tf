@@ -115,3 +115,13 @@ variable "argocd-ns" {
   type        = string
   default     = "argocd"
 }
+
+variable "rancher_access_key" {
+  description = "access key used for rancher auth"
+  type        = string
+}
+
+variable "rancher_secret_key" {
+  description = "secret key used for rancher auth"
+  type        = string
+}
