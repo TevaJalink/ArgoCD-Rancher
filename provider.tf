@@ -55,6 +55,7 @@ data "aws_eks_cluster_auth" "eks-devops" {
 }
 
 provider "rancher2" {
-  api_url   = "https://${var.rancher_hostname}/v3"
-  token_key = random_password.rancher_user.result
+  api_url    = "https://${var.rancher_hostname}/v3"
+  access_key = var.rancher_access_key
+  secret_key = var.rancher_secret_key
 }
